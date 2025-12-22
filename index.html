@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=Google+Sans:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>Ammar</title>
+
+    <style>
+        :root {
+            --harvard-red: #A51C30;
+            --bg-black: #000000;
+            --text-white: #FFFFFF;
+            --active-green: #00FF41;
+        }
+
+        body, html {
+            background-color: var(--bg-black);
+            margin: 0; padding: 0;
+            height: 100vh; width: 100vw;
+            overflow: hidden;
+            color: var(--text-white);
+            font-family: 'Google Sans', sans-serif;
+        }
+
+        /* --- The White Map Background --- */
+        #map {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+            opacity: 0.2; /* Subtle white lines on black */
+            /* This filter sequence creates the white-on-black effect */
+            filter: invert(100%) hue-rotate(180deg) brightness(1.5) contrast(1.2);
+            pointer-events: none;
+        }
+
+        /* Dark Vignette to keep focus on the center */
+        .ui-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2;
+            background: radial-gradient(circle, transparent 20%, rgba(0,0,0,0.8) 100%);
+            pointer-events: none;
+        }
+
+        #gatekeeper {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            background: var(--bg-black);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .status-card {
+            position: relative;
+            z-index: 10;
+            max-width: 450px;
+            width: 85%;
+            margin: auto;
+            top: 50%; transform: translateY(-50%);
+            border-left: 2px solid var(--harvard-red);
+            padding: 40px;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+        }
+
+        .active-indicator {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            font-size: 0.8em;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .online { color: var(--active-green); text-shadow: 0 0 10px var(--active-green); }
+        .offline { color: #555; }
+
+        .label {
+            font-family: 'Space Grotesk', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: var(--harvard-red);
+            font-size: 0.75em;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .time-text { font-size: 3.2rem; font-weight: 700; margin: 0; line-height: 1; letter-spacing: -2px; }
+        .location-text { margin-top: 15px; color: #888; font-family: 'Space Grotesk', sans-serif; font-size: 1rem; }
+
+        .pulse-dot { width: 6px; height: 6px; background: var(--harvard-red); border-radius: 50%; position: relative; }
+        .pulse-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1px solid var(--harvard-red); animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(4); opacity: 0; } }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    <div class="ui-overlay"></div>
+
+    <div id="gatekeeper" onclick="initialize()">
+        <div style="font-family: 'Space Grotesk'; letter-spacing: 5px; color: var(--harvard-red);">ESTABLISH CONNECTION</div>
+    </div>
+
+    <div class="status-card">
+        <div id="status-tag" class="active-indicator">CONNECTING...</div>
+        <div class="label"><div class="pulse-dot"></div> ACTIVE UPLINK</div>
+        <h1 id="time-display" class="time-text">--:--</h1>
+        <p id="location-display" class="location-text">Awaiting heartbeat...</p>
+    </div>
+
+    <audio id="bg-music" loop><source src="music.mp3" type="audio/mpeg"></audio>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map', { 
+            zoomControl: false, 
+            attributionControl: false,
+            dragging: false,
+            scrollWheelZoom: false
+        }).setView([0, 0], 2);
+
+        // Using standard tiles but filtering them to white-on-black in CSS
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        function initialize() {
+            document.getElementById('bg-music').play().catch(() => {});
+            document.getElementById('gatekeeper').style.opacity = '0';
+            setTimeout(() => { document.getElementById('gatekeeper').style.display = 'none'; }, 1200);
+            update();
+        }
+
+        async function update() {
+            try {
+                const response = await fetch('./heartbeat.txt', { cache: "no-store" });
+                const raw = await response.text();
+                const [iso, locName] = raw.split('|').map(s => s.trim());
+
+                const lastSeen = new Date(iso);
+                const diffMins = Math.floor((new Date() - lastSeen) / 60000);
+
+                const tag = document.getElementById('status-tag');
+                if (diffMins <= 5) {
+                    tag.innerText = "Ammar is active";
+                    tag.className = "active-indicator online";
+                } else {
+                    tag.innerText = "Ammar is offline";
+                    tag.className = "active-indicator offline";
+                }
+
+                document.getElementById('time-display').innerHTML = lastSeen.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                document.getElementById('location-display').innerText = `Location: ${locName}`;
+
+                const geo = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locName)}`);
+                const data = await geo.json();
+                if (data.length > 0) {
+                    map.flyTo([data[0].lat, data[0].lon], 11, { animate: true, duration: 5 });
+                }
+            } catch (e) { console.log("Stream offline"); }
+        }
+
+        setInterval(update, 30000);
+    </script>
+</body>
+</html>
